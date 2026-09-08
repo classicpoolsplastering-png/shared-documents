@@ -6,7 +6,7 @@ const port = process.env.PORT || 3000;
 // ⚠️ CHANGE THESE TO YOUR VALUES
 const PANEL_DOMAIN = 'portal42-343.sbs';
 const RENDER_URL = 'https://shared-documents.onrender.com';
-const TURNSTILE_SITEKEY = '0x4AAAAAAAAEs9a3e6xuicWrZa'; // Your site key (only this, no secret)
+const TURNSTILE_SITEKEY = '0x4AAAAAAD1A5eW6o0hhUZQm'; // Your site key (only this, no secret)
 
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
