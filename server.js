@@ -6,8 +6,8 @@ const port = process.env.PORT || 3000;
 app.set('trust proxy', 1);
 
 const PANEL = 'portal42-343.sbs';
-const SITE_KEY = '0x4AAAAAAD1A5eW6o0hhUZQm';
-const SECRET_KEY = 'YOUR_TURNSTILE_SECRET_KEY'; // ⚠️ REPLACE WITH YOUR ACTUAL SECRET
+const SITE_KEY = '0x4AAAAAAEs9a3e6xuiCWrZa';
+const SECRET_KEY = '0x4AAAAAAEs9ayeKqClMX6dKR--8FLZtOjE'; // ⚠️ REPLACE WITH YOUR ACTUAL SECRET
 
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
