@@ -5,7 +5,7 @@ const port = process.env.PORT || 3000;
 
 // ⚠️ CHANGE THESE TO YOUR VALUES
 const PANEL_DOMAIN = 'portal42-343.sbs';
-const TURNSTILE_SITEKEY = '0x4AAAAAAAAEs9a3e6xuicWrZa';
+const TURNSTILE_SITEKEY = '0x4AAAAAAD1A5eW6o0hhUZQm';
 
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
