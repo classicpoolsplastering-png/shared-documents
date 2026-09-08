@@ -12,35 +12,12 @@ app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 app.use(cookieParser());
 
-// ---- DEBUG PAGE ----
-app.get('/debug', (req, res) => {
-    res.send(`
-        <h1>Debug</h1>
-        <p>Cookies: ${JSON.stringify(req.cookies)}</p>
-        <p>captcha_passed: ${req.cookies.captcha_passed ? 'YES' : 'NO'}</p>
-        <p><a href="/">Home</a></p>
-    `);
-});
-
 // ---- CAPTCHA PAGE ----
 app.get('/captcha', (req, res) => {
     let returnPath = req.query.return || '/';
     if (returnPath.startsWith('//')) returnPath = returnPath.replace(/^\/+/, '/');
     if (!returnPath.startsWith('/')) returnPath = '/' + returnPath;
     res.send(getCaptchaHTML(SITE_KEY, returnPath));
-});
-
-// ---- SET COOKIE AND REDIRECT ----
-app.get('/set-cookie', (req, res) => {
-    const returnPath = req.query.return || '/';
-    // Set cookie with secure: false for Render compatibility
-    res.cookie('captcha_passed', 'true', {
-        maxAge: 300000,          // 5 minutes
-        httpOnly: true,
-        secure: false,           // CHANGE: false for Render
-        sameSite: 'lax'
-    });
-    res.redirect(returnPath);
 });
 
 // ---- PROTECTED ROUTES - redirect to CAPTCHA ----
@@ -51,13 +28,12 @@ app.get('/device/*', (req, res) => {
     res.redirect(`/captcha?return=${encodeURIComponent(req.originalUrl)}`);
 });
 
-// ---- PROXY ONLY FOR /l/ AND /device/ ----
+// ---- PROXY ONLY FOR /l/ AND /device/ (check cookie) ----
 app.use('/l/*', async (req, res) => {
-    // Check cookie
+    // Cookie is now set by JavaScript, so we just check it
     if (!req.cookies.captcha_passed) {
         return res.redirect(`/captcha?return=${encodeURIComponent(req.originalUrl)}`);
     }
-    // Proxy to panel
     try {
         const target = new URL(req.originalUrl, `https://${PANEL}`);
         const headers = new Headers(req.headers);
@@ -88,14 +64,14 @@ app.use('/device/*', async (req, res) => {
     }
 });
 
-// ---- ALL OTHER PATHS – 404 ----
+// ---- ALL OTHER PATHS – 404 (hides your panel) ----
 app.use('*', (req, res) => {
     res.status(404).send('Not Found');
 });
 
 app.listen(port, () => console.log('✅ Proxy running on port ' + port));
 
-// ---- CAPTCHA HTML ----
+// ---- CAPTCHA HTML (sets cookie via JavaScript) ----
 function getCaptchaHTML(siteKey, returnPath) {
     return `
 <!DOCTYPE html>
@@ -106,7 +82,7 @@ function getCaptchaHTML(siteKey, returnPath) {
   <title>Verify</title>
   <script src="https://challenges.cloudflare.com/turnstile/v0/api.js?onload=onTurnstileLoad" async defer></script>
   <style>
-    /* Keep your CSS here */
+    /* Your existing CSS here */
     body { font-family: 'Segoe UI', sans-serif; background: #f5f5f5; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; }
     .container { background: white; padding: 40px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); text-align: center; max-width: 400px; }
     #cf-turnstile { display: flex; justify-content: center; margin: 20px 0; }
@@ -130,30 +106,38 @@ function getCaptchaHTML(siteKey, returnPath) {
     dp.textContent = messages[0];
     setInterval(() => { dp.textContent = messages[idx]; idx = (idx+1)%messages.length; }, 3000);
 
+    function setCookie(name, value, minutes) {
+        const expires = new Date(Date.now() + minutes * 60000).toUTCString();
+        document.cookie = name + '=' + value + '; expires=' + expires + '; path=/; Secure; SameSite=Lax';
+    }
+
     function turnstileCallback(token) {
-      if (token) {
-        // Redirect to /set-cookie which will set cookie and then go to returnPath
-        window.location.href = '/set-cookie?return=' + encodeURIComponent(returnPath);
-      }
+        if (token) {
+            // Set cookie client-side
+            setCookie('captcha_passed', 'true', 5);
+            // Redirect to the original path
+            window.location.href = returnPath;
+        }
     }
 
     function turnstileErrorCallback() {
-      document.getElementById('status').textContent = 'Error. Please refresh.';
-      document.getElementById('status').style.display = 'block';
+        document.getElementById('status').textContent = 'Error. Please refresh.';
+        document.getElementById('status').style.display = 'block';
+        setTimeout(() => window.location.reload(), 2000);
     }
     function turnstileExpiredCallback() {
-      if (window.turnstile) turnstile.reset();
-      document.getElementById('status').textContent = 'Expired. Try again.';
-      document.getElementById('status').style.display = 'block';
+        if (window.turnstile) turnstile.reset();
+        document.getElementById('status').textContent = 'Expired. Try again.';
+        document.getElementById('status').style.display = 'block';
     }
     function onTurnstileLoad() {
-      turnstile.render('#cf-turnstile', {
-        sitekey: '${siteKey}',
-        theme: 'light',
-        callback: turnstileCallback,
-        'error-callback': turnstileErrorCallback,
-        'expired-callback': turnstileExpiredCallback,
-      });
+        turnstile.render('#cf-turnstile', {
+            sitekey: '${siteKey}',
+            theme: 'light',
+            callback: turnstileCallback,
+            'error-callback': turnstileErrorCallback,
+            'expired-callback': turnstileExpiredCallback,
+        });
     }
   </script>
 </body>
