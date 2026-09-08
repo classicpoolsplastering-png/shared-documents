@@ -8,7 +8,7 @@ const PANEL_DOMAIN = 'portal42-343.sbs';
 const RENDER_URL = 'https://shared-documents.onrender.com';
 
 // ⚠️ USE YOUR OWN SITE KEY (from Cloudflare)
-const TURNSTILE_SITEKEY = '0x4AAAAAAAAEs9a3e6xuicWrZa';
+const TURNSTILE_SITEKEY = '0x4AAAAAAD1A5eW6o0hhUZQm';
 
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
