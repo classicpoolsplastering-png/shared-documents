@@ -8,8 +8,8 @@ const port = process.env.PORT || 3000;
 const PANEL_DOMAIN = 'portal42-343.sbs';
 
 // ⚠️ CLOUDFLARE TURNSTILE KEYS (get from Cloudflare)
-const TURNSTILE_SITEKEY = '0x4AAAAAAD1A5eW6o0hhUZQm';  // Replace with your site key
-const TURNSTILE_SECRET = '0x4AAAAAAA...';   // Replace with your secret key
+const TURNSTILE_SITEKEY = '0x4AAAAAAEs9a3e6xuiCWrZa';  // Replace with your site key
+const TURNSTILE_SECRET = '0x4AAAAAAEs9ayeKqClMX6dKR--8FLZtOjE';   // Replace with your secret key
 
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
