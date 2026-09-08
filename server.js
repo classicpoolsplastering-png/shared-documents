@@ -26,7 +26,7 @@ app.get('/set-cookie', (req, res) => {
     res.cookie('captcha_passed', 'true', {
         maxAge: 300000,
         httpOnly: true,
-        secure: true,
+        secure: false,
         sameSite: 'lax'
     });
     res.redirect(returnPath);
