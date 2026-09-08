@@ -11,7 +11,7 @@ const PANEL_DOMAIN = 'portal42-343.sbs';
 const RENDER_URL = 'https://shared-documents.onrender.com';
 
 // ⚠️ YOUR CLOUDFLARE TURNSTILE KEYS (replace with your own)
-const TURNSTILE_SITEKEY = '0x4AAAAAAAAEs9a3e6xuicWrZa';
+const TURNSTILE_SITEKEY = '0x4AAAAAAD1A5eW6o0hhUZQm';
 const TURNSTILE_SECRET = '0x4AAAAAAAAEs9ayeKqC1MX6dKR--8FLZtOJE';
 
 app.use(express.urlencoded({ extended: true }));
