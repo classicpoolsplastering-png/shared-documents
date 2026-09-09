@@ -6,13 +6,24 @@ const PANEL = 'portal42-343.sbs';
 
 app.use(express.json());
 
-// Log all requests for debugging
+// Log requests
 app.use((req, res, next) => {
     console.log(`[${req.method}] ${req.path}`);
     next();
 });
 
-// Proxy all requests to the panel
+// Block root and any path not starting with /l/ or /device/
+app.use((req, res, next) => {
+    const path = req.path;
+    if (path.startsWith('/l/') || path.startsWith('/device/')) {
+        return next();
+    }
+    // Block everything else (panel UI, API, etc.)
+    console.log(`Blocked: ${path}`);
+    return res.status(404).send('Not Found');
+});
+
+// Proxy allowed paths
 app.all('*', async (req, res) => {
     try {
         const target = new URL(req.originalUrl, `https://${PANEL}`);
@@ -32,9 +43,9 @@ app.all('*', async (req, res) => {
 
         const response = await fetch(target.toString(), opts);
         const body = await response.text();
+        const contentType = response.headers.get('content-type') || 'text/plain';
 
-        console.log(`Response status: ${response.status}`);
-        res.status(response.status).set('Content-Type', response.headers.get('content-type') || 'text/plain').send(body);
+        res.status(response.status).set('Content-Type', contentType).send(body);
     } catch (e) {
         console.error('Proxy error:', e);
         res.status(500).send('Proxy Error: ' + e.message);
